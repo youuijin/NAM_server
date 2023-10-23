@@ -27,15 +27,17 @@ def main(args, set_k=None):
     device = torch.device('cuda:'+str(args.device_num))
 
     if set_k!=None:
-        if set_k<0:
-            args.NAM_k = -1
-            args.lr_ratio = -1*set_k
-        else:
-            args.NAM_k = 1
-            args.lr_ratio = set_k
+        args.NAM_k = set_k
+        args.lr_ratio = 1
+        # if set_k<0:
+        #     args.NAM_k = -1
+        #     args.lr_ratio = -1*set_k
+        # else:
+        #     args.NAM_k = 1
+        #     args.lr_ratio = set_k
 
 
-    model = utils.setModel(args.model, args.n_way, args.imgsz, args.imgc)
+    model = utils.setModel(args.model, args.n_way, args.imgsz, args.imgc, pretrained=None)
     model = torch.nn.DataParallel(model)
     model = model.to(device)
 
@@ -44,13 +46,13 @@ def main(args, set_k=None):
                                         transforms.Normalize((0, 0, 0), (1, 1, 1))])
 
     train_data = torchvision.datasets.CIFAR10(root='./data', train=True,
-                                            download=True, transform=transform)
+                                            download=False, transform=transform)
     train_size = int(len(train_data) * 0.8) # 80% training data
     valid_size = len(train_data) - train_size # 20% validation data
     train_data, valid_data = torch.utils.data.random_split(train_data, [train_size, valid_size])
 
     test_data = torchvision.datasets.CIFAR10(root='./data', train=False,
-                                        download=True, transform=transform)
+                                        download=False, transform=transform)
     
     print(len(train_data), len(valid_data), len(test_data))
     
@@ -58,7 +60,7 @@ def main(args, set_k=None):
     adv_optim = torch.optim.Adam(model.parameters(), lr=args.lr*args.lr_ratio)
     
     if args.NAM:
-        writer = SummaryWriter(f"./loss_log/{args.model}/NAM_{args.NAM_k}_{args.lr}")
+        writer = SummaryWriter(f"./loss_log/{args.model}/NAM_{round(args.NAM_k*args.lr_ratio, 1)}_{args.lr}")
     elif args.train_attack!="":
         writer = SummaryWriter(f"./loss_log/{args.model}/{args.train_attack}_{args.train_eps}_{args.lr}_{args.lr_ratio}")
     else:
@@ -68,8 +70,8 @@ def main(args, set_k=None):
     best_val_adv = 0
     last_val = 0
     last_val_adv = 0
-    bound_rate = [0 for i in args.epoch] # epoch마다 저장
-    bound_rate_elements = [0 for i in args.epoch] # epoch마다 저장
+    bound_rate = [0 for i in range(args.epoch)] # epoch마다 저장
+    bound_rate_elements = [0 for i in range(args.epoch)] # epoch마다 저장
 
     for epoch in range(args.epoch):
         db = torch.utils.data.DataLoader(train_data, batch_size=args.task_num, shuffle=True, num_workers=2)
@@ -130,7 +132,7 @@ def main(args, set_k=None):
 
         if args.train_attack == "aRUB" or args.NAM:
             writer.add_scalar("L2 distance", distance, epoch)
-            writer.add_scalar("bound_rate", round(bound_rate_elements[epoch]/bound_rate[epoch]*100,2), epoch)
+            writer.add_scalar("bound_rate", round(bound_rate[epoch]/bound_rate_elements[epoch]*100,2), epoch)
         writer.add_scalar("train_acc", round(correct_count/len(train_data)*100, 2), epoch)
         # writer.add_histogram("train", np.array(train_losses), epoch)
         # writer_train.add_histogram(summary_name, np.array(train_losses), epoch)
@@ -182,8 +184,13 @@ def main(args, set_k=None):
         
         print("epoch: ", epoch, "\ttraining acc:", round(correct_count/len(train_data)*100, 2))
         print("val acc:", last_val, "\tval adv acc:", last_val_adv)
+
+    if args.train_attack == "aRUB" or args.NAM:
+        bound_rate_value = round(100.0* np.array(bound_rate).sum()/np.array(bound_rate_elements).sum(), 2)
+    else:
+        bound_rate_value = 0
     
-    return last_val, last_val_adv, best_val, best_val_adv, round(bound_rate/bound_rate_elements*100,2)
+    return last_val, last_val_adv, best_val, best_val_adv, bound_rate_value
 
 def iter_main(k):
     argparser = argparse.ArgumentParser()
@@ -212,8 +219,6 @@ def iter_main(k):
 
     argparser.add_argument('--pretrained', type=str, help='path of pretrained model', default="")
 
-    argparser.add_argument('--denoiser_model', action="store_true", help="user denoiser and model")
-    argparser.add_argument('--model_only', action="store_true", help="user model only")
     argparser.add_argument('--NAM', action='store_true', default=True)
     argparser.add_argument('--NAM_k', type=float, default=1)
     args = argparser.parse_args()
@@ -250,8 +255,6 @@ if __name__ == '__main__':
 
     argparser.add_argument('--pretrained', type=str, help='path of pretrained model', default="")
 
-    argparser.add_argument('--denoiser_model', action="store_true", help="user denoiser and model")
-    argparser.add_argument('--model_only', action="store_true", help="user model only")
     argparser.add_argument('--NAM', action='store_true', default=False)
     argparser.add_argument('--NAM_k', type=float, default=1)
     args = argparser.parse_args()
