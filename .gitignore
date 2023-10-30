@@ -3,4 +3,6 @@ loss_log_eps6
 data
 k_logs
 k_logs_eps6
+step_log
+python_exe.ipynb
 __pycache__
