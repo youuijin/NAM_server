@@ -8,12 +8,12 @@ class NAMLoss:
         self.k = k
 
     def get_loss(self, x, y, sum=False, reduction=True):
-        logit = self.net(x)
+        logit = self.net(x.unsqueeze(dim=1))
         loss = F.cross_entropy(logit, y, reduction='none')
         softmax = F.softmax(logit, dim=1)
         y_onehot = F.one_hot(y, num_classes = softmax.shape[1])
         softmax = softmax - y_onehot
-        norm = torch.diagonal(torch.matmul(softmax, softmax.T))
+        norm = torch.sum(softmax, softmax, dim=1)
 
         approx_loss = self.k * norm
         if sum:
@@ -37,10 +37,16 @@ class NAMLoss:
 
 
 if __name__ == '__main__':
-    model = utils.setModel("resnet18", 5, 112, 3)
-    loss = NAMLoss(model, 1)
-    x = torch.randn(2, 3, 112, 112, requires_grad=True)
-    y = torch.zeros(2, 5)
-    y[0][1] = 1
-    y[1][2] = 1
-    loss.get_loss(x, y)
+    a = torch.randn(256,10)
+    import time
+    start = time.time()
+    for i in range(100000):
+        b = torch.diagonal(a@a.T)
+    end = time.time()
+    print(end-start)
+
+    start = time.time()
+    for i in range(100000):
+        b = torch.sum(a*a, dim=1)
+    end = time.time()
+    print(end-start)

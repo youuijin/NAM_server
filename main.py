@@ -29,13 +29,6 @@ def main(args, set_k=None):
     if set_k!=None:
         args.NAM_k = set_k
         args.lr_ratio = 1
-        # if set_k<0:
-        #     args.NAM_k = -1
-        #     args.lr_ratio = -1*set_k
-        # else:
-        #     args.NAM_k = 1
-        #     args.lr_ratio = set_k
-
 
     model = utils.setModel(args.model, args.n_way, args.imgsz, args.imgc, pretrained=None)
     model = torch.nn.DataParallel(model)
