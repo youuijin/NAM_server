@@ -8,11 +8,12 @@ import torchvision.transforms as transforms
 import torch.nn.functional as F
 
 from tqdm import tqdm
+import time
+import pandas as pd
 
 from torch.utils.tensorboard import SummaryWriter
 
 import utils
-from NAMloss import NAMLoss
 
 def main(args):
     seed = 706
@@ -50,13 +51,21 @@ def main(args):
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer=optim, lr_lambda=lambda epoch: 0.95**epoch)
     adv_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer=adv_optim, lr_lambda=lambda epoch: 0.95**epoch)
 
-    writer = SummaryWriter(f"./step_log/step{args.step}_{args.train_eps}_{args.lr}")
+    writer = SummaryWriter(f"./step_log/step{args.step}_{args.train_eps}_{args.lr}_{round(args.lipschitz,4)}")
+    approx_writer = SummaryWriter("./step_log/approx_loss")
+    adv_writer = SummaryWriter("./step_log/adv_loss")
+
+    times = time.time()
 
     for epoch in range(args.epoch):
+        st = time.time()
         db = torch.utils.data.DataLoader(train_data, batch_size=args.task_num, shuffle=True, num_workers=2)
         train_correct_count = 0
         train_loss = 0
         train_loss_adv = 0
+
+        approx_loss_sum = 0
+        loss_adv_sum = 0
 
         bound_rate = 0
         bound_rate_elements = 0
@@ -93,6 +102,8 @@ def main(args):
 
                 # cross entropy 미분 -> y'-y
                 approx_loss = loss + torch.sum((logit_adv-logit)*(softmax-y_onehot), dim=1) + args.lipschitz/2.0*torch.pow(norm, 2)
+                approx_loss_sum += approx_loss.sum().item()
+                loss_adv_sum += loss_adv.sum().item()
 
                 bound_rate_elements += x.shape[0]
                 bound_rate += (loss_adv<=approx_loss).sum().item() 
@@ -164,6 +175,9 @@ def main(args):
                 softmax = F.softmax(logit, dim=1)
 
                 approx_loss = loss-1.0/(2*args.lipschitz)*torch.pow(torch.norm(softmax-y_onehot),2)
+                approx_loss_sum += approx_loss.sum().item()
+                loss_adv_sum += loss_adv.sum().item()
+
                 bound_rate_elements += x.shape[0]
                 bound_rate += (loss_adv<=approx_loss).sum().item() 
 
@@ -178,8 +192,12 @@ def main(args):
                 softmax = F.softmax(logit, dim=1)
 
                 approx_loss = loss+3.0/(2*args.lipschitz)*torch.pow(torch.norm(softmax-y_onehot),2)
+                approx_loss_sum += approx_loss.sum().item()
+                loss_adv_sum += loss_adv.sum().item()
+
                 bound_rate_elements += x.shape[0]
                 bound_rate += (loss_adv<=approx_loss).sum().item() 
+                
             
             if args.step>0:
                 approx_loss = approx_loss.sum()
@@ -187,9 +205,13 @@ def main(args):
                 adv_optim.zero_grad()
                 approx_loss.backward()
                 adv_optim.step()
+            
+            times += time.time()-st
 
-        if bound_rate_elements>0:
+        if args.step in [1, 5, 6]:
             writer.add_scalar("bound_rate", round(bound_rate/bound_rate_elements*100,4), epoch)
+            approx_writer.add_scalar(f"step{args.step}_{args.train_eps}_{args.lr}_{round(args.lipschitz,4)}/", round(approx_loss_sum/len(train_data), 4), epoch)
+            adv_writer.add_scalar(f"step{args.step}_{args.train_eps}_{args.lr}_{round(args.lipschitz,4)}/", round(loss_adv_sum/len(train_data), 4), epoch)
         writer.add_scalar("train/acc", round(train_correct_count/len(train_data)*100, 4), epoch)
         writer.add_scalar("train/loss", round(train_loss/len(train_data)*100, 4), epoch)
         writer.add_scalar("train/approx", round(train_loss_adv/len(train_data)*100, 4), epoch)
@@ -221,12 +243,12 @@ def main(args):
             outputs = torch.argmax(pred, dim=1)
             val_adv_correct_count += (outputs == y).sum().item()
             loss = torch.nn.functional.cross_entropy(logit, y)
-            val_loss_adv == loss.item()*x.shape[0]
+            val_loss_adv += loss.item()*x.shape[0]
 
         writer.add_scalar("val/acc", round(val_correct_count/len(valid_data)*100, 4), epoch)
         writer.add_scalar("val/loss", round(val_loss/len(valid_data)*100, 4), epoch)
-        writer.add_scalar("val/adv_acc", round(val_correct_count/len(valid_data)*100, 4), epoch)
-        writer.add_scalar("val/adv_loss", round(val_loss/len(valid_data)*100, 4), epoch)
+        writer.add_scalar("val/adv_acc", round(val_adv_correct_count/len(valid_data)*100, 4), epoch)
+        writer.add_scalar("val/adv_loss", round(val_loss_adv/len(valid_data)*100, 4), epoch)
 
         scheduler.step()
         adv_scheduler.step()
@@ -250,7 +272,7 @@ if __name__ == '__main__':
     argparser.add_argument('--lr_ratio', type=float, help='adv lr ratio', default=0.5)
 
     # NAM options
-    argparser.add_argument('--lipschitz', type=float, help='lipschitz constant', default=4/27) # 계산한 값을 토대로
+    argparser.add_argument('--lipschitz', type=float, help='lipschitz constant', default=4/270) # 계산한 값을 토대로
     argparser.add_argument('--step', type=int, help='step in proof', default=1)
     argparser.add_argument('--twice', action='store_true', help='apply standard loss value twice', default=False)
     argparser.add_argument('--train_eps', type=float, help='to check upper bound', default=2.0)
