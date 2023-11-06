@@ -166,7 +166,7 @@ def main(args, set_k=None):
             outputs = torch.argmax(pred, dim=1)
             val_adv_correct_count += (outputs == y).sum().item()
             loss = torch.nn.functional.cross_entropy(logit, y)
-            val_losses_adv += loss.item()*x.shape[0]
+            val_loss_adv += loss.item()*x.shape[0]
 
         writer.add_scalar("val/acc", round(val_correct_count/len(valid_data)*100, 4), epoch)
         writer.add_scalar("val/loss", round(val_loss/len(valid_data)*100, 4), epoch)
@@ -183,8 +183,8 @@ def main(args, set_k=None):
         if last_val_adv > best_val_adv:
             best_val_adv = last_val_adv
         
-        print("epoch: ", epoch, "\ttraining acc:", round(val_correct_count/len(train_data)*100, 2))
-        print("val acc:", last_val, "\tval adv acc:", last_val_adv)
+        # print("epoch: ", epoch, "\ttraining acc:", round(val_correct_count/len(train_data)*100, 2))
+        # print("val acc:", last_val, "\tval adv acc:", last_val_adv)
 
     # if args.train_attack == "aRUB" or args.NAM:
     #     bound_rate_value = round(100.0* np.array(bound_rate).sum()/np.array(bound_rate_elements).sum(), 2)
@@ -193,7 +193,9 @@ def main(args, set_k=None):
     
     # return last_val, last_val_adv, best_val, best_val_adv, bound_rate_value
 
-def iter_main(k):
+
+if __name__ == '__main__':
+
     argparser = argparse.ArgumentParser()
 
     # Dataset options
@@ -218,42 +220,6 @@ def iter_main(k):
     argparser.add_argument('--rho', type=float, help='aRUB-rho', default=6)
     argparser.add_argument('--iter', type=int, default=10)
 
-    args = argparser.parse_args()
-
-    return main(args, set_k=k)
-
-
-
-if __name__ == '__main__':
-
-    argparser = argparse.ArgumentParser()
-
-    # Dataset options
-    argparser.add_argument('--imgsz', type=int, help='imgsz', default=112)
-    argparser.add_argument('--imgc', type=int, help='imgc', default=3)
-    argparser.add_argument('--n_way', type=int, help='n way', default=10)
-    
-    # Training options
-    argparser.add_argument('--model', type=str, help='type of model to use', default="")
-    argparser.add_argument('--epoch', type=int, help='epoch number', default=50)
-    argparser.add_argument('--task_num', type=int, help='meta batch size, namely task num', default=256)
-    argparser.add_argument('--device_num', type=int, help='what gpu to use', default=0)
-    argparser.add_argument('--lr', type=float, help='learning rate', default=0.0005)
-    # argparser.add_argument('--adv_lr', type=float, help='adversarial learning rate', default=0.0001)
-    argparser.add_argument('--lr_ratio', type=float, help='adv lr ratio', default=0.2)
-    argparser.add_argument('--train_attack', type=str, help='attack for adversarial training', default="")
-    argparser.add_argument('--train_eps', type=float, help='training attack bound', default=6)
-
-    # adversarial attack options
-    argparser.add_argument('--test_attack', type=str, default="PGD_Linf")
-    argparser.add_argument('--test_eps', type=float, help='attack-eps', default=6)
-    argparser.add_argument('--rho', type=float, help='aRUB-rho', default=2)
-    argparser.add_argument('--iter', type=int, default=10)
-
-    argparser.add_argument('--pretrained', type=str, help='path of pretrained model', default="")
-
-    argparser.add_argument('--NAM', action='store_true', default=False)
-    argparser.add_argument('--NAM_k', type=float, default=1)
     args = argparser.parse_args()
 
     main(args)
