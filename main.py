@@ -8,11 +8,11 @@ import torchvision.transforms as transforms
 import torch.nn as nn
 
 from tqdm import tqdm
+import time
 
 from torch.utils.tensorboard import SummaryWriter
 
 import utils
-from NAMloss import NAMLoss
 
 def main(args, set_k=None):
     seed = 706
@@ -67,8 +67,12 @@ def main(args, set_k=None):
     best_val_adv = 0
     last_val = 0
     last_val_adv = 0
+
+    all_time = time.time()
+    train_time = 0
     
     for epoch in range(args.epoch):
+        train_st = time.time()
         train_db = torch.utils.data.DataLoader(train_data, batch_size=args.task_num, shuffle=True, num_workers=2)
         train_correct_count=0
         train_loss = 0
@@ -123,6 +127,7 @@ def main(args, set_k=None):
                     bound_rate_elements += x.shape[0]
                     bound_rate += (loss_origin<=approx_loss).sum().item()
 
+        train_time += time.time()-train_st
                     
         if args.train_attack == "aRUB":
             writer.add_scalar("bound_rate", round(bound_rate/bound_rate_elements*100,4), epoch)
@@ -192,6 +197,10 @@ def main(args, set_k=None):
     #     bound_rate_value = 0
     
     # return last_val, last_val_adv, best_val, best_val_adv, bound_rate_value
+    all_time = time.time() - all_time
+
+    writer.add_scalar("time/all", all_time, 0)
+    writer.add_scalar("time/train", train_time, 0)
 
 
 if __name__ == '__main__':
@@ -205,7 +214,7 @@ if __name__ == '__main__':
     
     # Training options
     argparser.add_argument('--model', type=str, help='type of model to use', default="resnet18")
-    argparser.add_argument('--epoch', type=int, help='epoch number', default=100)
+    argparser.add_argument('--epoch', type=int, help='epoch number', default=60)
     argparser.add_argument('--task_num', type=int, help='meta batch size, namely task num', default=256)
     argparser.add_argument('--device_num', type=int, help='what gpu to use', default=0)
     argparser.add_argument('--lr', type=float, help='learning rate', default=0.01)

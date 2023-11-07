@@ -51,14 +51,18 @@ def main(args):
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer=optim, lr_lambda=lambda epoch: 0.95**epoch)
     adv_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer=adv_optim, lr_lambda=lambda epoch: 0.95**epoch)
 
-    writer = SummaryWriter(f"./step_log/step{args.step}_{args.train_eps}_{args.lr}_{round(args.lipschitz,4)}")
+    model_name = f"step{args.step}_{args.train_eps}_{args.lr}_{args.lr_ratio}_{round(args.lipschitz,4)}"
+
+    writer = SummaryWriter(f"./step_log/{model_name}")
     approx_writer = SummaryWriter("./step_log/approx_loss")
     adv_writer = SummaryWriter("./step_log/adv_loss")
 
-    times = time.time()
+    all_time = time.time()
+    train_time = 0
+    # loss_time = 0
 
     for epoch in range(args.epoch):
-        st = time.time()
+        train_st = time.time()
         db = torch.utils.data.DataLoader(train_data, batch_size=args.task_num, shuffle=True, num_workers=2)
         train_correct_count = 0
         train_loss = 0
@@ -196,9 +200,62 @@ def main(args):
                 loss_adv_sum += loss_adv.sum().item()
 
                 bound_rate_elements += x.shape[0]
-                bound_rate += (loss_adv<=approx_loss).sum().item() 
+                bound_rate += (loss_adv<=approx_loss).sum().item()
+
+            elif args.step==7:
+                at = utils.setAttack("PGD_Linf", model, args.train_eps, args)
+                x_adv = at.perturb(x, y)
+                logit = model(x)
+                logit_adv = model(x_adv)
+                softmax = F.softmax(logit, dim=1)
+
+                approx_loss_2 = torch.pow(torch.norm(logit_adv - (logit - 1.0/args.lipschitz*(softmax-y_onehot))),2)
+
+                approx_loss_6 = loss+3.0/(2*args.lipschitz)*torch.pow(torch.norm(softmax-y_onehot),2)
+                approx_loss = approx_loss_2.sum() + approx_loss_6.sum()
                 
-            
+                approx_loss_sum += approx_loss.sum().item()
+
+            elif args.step==8:
+                at = utils.setAttack("PGD_Linf", model, args.train_eps, args)
+                x_adv = at.perturb(x, y)
+
+                delta = torch.reshape((x_adv - x), (x.shape[0],-1)).to(device)
+
+                logit = model(x)
+                softmax = F.softmax(logit, dim=1)
+
+                x_copy = x.detach().clone().requires_grad_(True)
+
+                logits = model(x_copy)
+                logits_sum = torch.sum(logits, dim=0)
+
+                jacobian = torch.zeros(x_copy.size(0), args.n_way, x_copy.size(1), x_copy.size(2), x_copy.size(3), dtype=x_copy.dtype)
+
+                for i in range(args.n_way):
+                    logits_sum[i].backward(retain_graph=True)
+                    x_grad = x_copy.grad.clone().detach()
+                    jacobian[:, i, :, :, :] = x_grad
+
+                jacobian = torch.reshape(jacobian, (x.shape[0], args.n_way, -1)).to(device)
+
+                approx_loss_3 = torch.pow(torch.norm(torch.matmul(delta, jacobian.transpose(1, 2))+1.0/args.lipschitz*(softmax-y_onehot)),2)
+                
+                approx_loss_6 = loss+3.0/(2*args.lipschitz)*torch.pow(torch.norm(softmax-y_onehot),2)
+                approx_loss = approx_loss_3.sum() + approx_loss_6.sum()
+                
+                approx_loss_sum += approx_loss.sum().item()
+
+            elif args.step==9:
+                logit = model(x)
+                softmax = F.softmax(logit, dim=1)
+
+                approx_loss_4 = torch.pow((1.0+args.train_eps)/args.lipschitz*torch.norm(softmax-y_onehot), 2)
+                approx_loss_6 = loss+3.0/(2*args.lipschitz)*torch.pow(torch.norm(softmax-y_onehot),2)
+                approx_loss = approx_loss_4.sum() + approx_loss_6.sum()
+                
+                approx_loss_sum += approx_loss.sum().item()
+
             if args.step>0:
                 approx_loss = approx_loss.sum()
                 train_loss_adv += approx_loss.item() * x.shape[0]
@@ -206,16 +263,16 @@ def main(args):
                 approx_loss.backward()
                 adv_optim.step()
             
-            times += time.time()-st
+        train_time += time.time()-train_st
 
         if args.step in [1, 5, 6]:
             writer.add_scalar("bound_rate", round(bound_rate/bound_rate_elements*100,4), epoch)
-            approx_writer.add_scalar(f"step{args.step}_{args.train_eps}_{args.lr}_{round(args.lipschitz,4)}/", round(approx_loss_sum/len(train_data), 4), epoch)
-            adv_writer.add_scalar(f"step{args.step}_{args.train_eps}_{args.lr}_{round(args.lipschitz,4)}/", round(loss_adv_sum/len(train_data), 4), epoch)
+            approx_writer.add_scalar(f"{model_name}/", round(approx_loss_sum/len(train_data), 4), epoch)
+            adv_writer.add_scalar(f"{model_name}/", round(loss_adv_sum/len(train_data), 4), epoch)
         writer.add_scalar("train/acc", round(train_correct_count/len(train_data)*100, 4), epoch)
         writer.add_scalar("train/loss", round(train_loss/len(train_data)*100, 4), epoch)
         writer.add_scalar("train/approx", round(train_loss_adv/len(train_data)*100, 4), epoch)
-        
+    
         model.eval()
         db_val = torch.utils.data.DataLoader(valid_data, batch_size=args.task_num, shuffle=True, num_workers=0)
         val_correct_count=0
@@ -253,6 +310,11 @@ def main(args):
         scheduler.step()
         adv_scheduler.step()
 
+    all_time = time.time() - all_time
+
+    writer.add_scalar("time/all", all_time, 0)
+    writer.add_scalar("time/train", train_time, 0)
+    
 
 if __name__ == '__main__':
 
@@ -265,7 +327,7 @@ if __name__ == '__main__':
     
     # Training options
     argparser.add_argument('--model', type=str, help='type of model to use', default="")
-    argparser.add_argument('--epoch', type=int, help='epoch number', default=100)
+    argparser.add_argument('--epoch', type=int, help='epoch number', default=60)
     argparser.add_argument('--task_num', type=int, help='meta batch size, namely task num', default=256)
     argparser.add_argument('--device_num', type=int, help='what gpu to use', default=0)
     argparser.add_argument('--lr', type=float, help='learning rate', default=0.01)
