@@ -1,9 +1,11 @@
-loss_log
-loss_log_eps6
 data
+logs
 k_logs
 k_logs_eps6
 step_log
+best_log
 python_exe.ipynb
-__pycache__
 models
+command.sh
+*.pyc
+__pycache__
