@@ -52,6 +52,10 @@ def setModel(str, n_way, imgsz, imgc, pretrained='IMAGENET1K_V1'):
     if str=="resnet18":
         model = models.resnet18(weights=pretrained)
         num_ftrs = model.fc.in_features
+        # model.fc = torch.nn.Sequential(
+        #     torch.nn.Dropout(0.5),
+        #     torch.nn.Linear(num_ftrs, n_way)
+        # )
         model.fc = torch.nn.Linear(num_ftrs, n_way)
         model.conv1 = torch.nn.Conv2d(imgc, 64, kernel_size=7, stride=2, padding=3, bias=False)
         return model
@@ -114,23 +118,33 @@ def set_optim(args, model):
     optim = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
     adv_optim = torch.optim.SGD(model.parameters(), lr=args.lr * args.lr_ratio, momentum=0.9, weight_decay=5e-4)
 
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max = 100)
-    adv_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(adv_optim, T_max = 100)
+    # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max = 100)
+    # adv_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(adv_optim, T_max = 100)
 
-    # if args.sche == 'lambda98':
-    #     lamb = 0.98
-    #     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer=optim, lr_lambda=lambda epoch: lamb**epoch)
-    # elif args.sche == 'lambda95':
-    #     print('in')
-    #     lamb = 0.95
-    #     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer=optim, lr_lambda=lambda epoch: lamb**epoch)
-    # elif args.sche == 'cosine':
-    #     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=100)
-    # elif args.sche == 'step':
-    #     scheduler = torch.optim.lr_scheduler.StepLR(optim, step_size=10, gamma=0.5)
-    # else:
-    #     lamb = 1.0
-    #     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer=optim, lr_lambda=lambda epoch: lamb**epoch)
+    if args.sche == 'lambda98':
+        lamb = 0.98
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer=optim, lr_lambda=lambda epoch: lamb**epoch)
+        adv_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer=adv_optim, lr_lambda=lambda epoch: lamb**epoch)
+    elif args.sche == 'lambda95':
+        lamb = 0.95
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer=optim, lr_lambda=lambda epoch: lamb**epoch)
+        adv_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer=adv_optim, lr_lambda=lambda epoch: lamb**epoch)
+    elif args.sche == 'cosine':
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=int(args.epoch/4))
+        adv_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(adv_optim, T_max=int(args.epoch/4))
+    elif args.sche == 'step':
+        scheduler = torch.optim.lr_scheduler.StepLR(optim, step_size=int(args.epoch*0.2), gamma=0.5)
+        adv_scheduler = torch.optim.lr_scheduler.StepLR(adv_optim, step_size=int(args.epoch*0.2), gamma=0.5)
+    elif args.sche == 'multistep':
+        scheduler = torch.optim.lr_scheduler.MultiStepLR(optim, milestones=[int(args.epoch*0.5), int(args.epoch*0.8)], gamma=0.1) 
+        adv_scheduler = torch.optim.lr_scheduler.MultiStepLR(adv_optim, milestones=[int(args.epoch*0.5), int(args.epoch*0.8)], gamma=0.1) 
+    elif args.sche == 'no':
+        lamb = 1.0
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer=optim, lr_lambda=lambda epoch: lamb**epoch)
+        adv_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer=adv_optim, lr_lambda=lambda epoch: lamb**epoch)
+    else:
+        print("Wrong Learning rate Scheduler")
+        exit()
     
     return optim, adv_optim, scheduler, adv_scheduler
 
@@ -139,15 +153,15 @@ def writer(args, log_dir):
     cur = datetime.now().strftime('%m%d_%H%M%S')
 
     if args.train_attack!="":
-        log_name = f"{args.train_attack}/{args.train_eps}/{args.lr}_{args.lr_ratio}/{cur}"
+        log_name = f"{args.sche}/{args.train_attack}/{args.train_eps}/{args.lr}_{args.lr_ratio}/{cur}"
         if args.train_attack == 'QAUB':
-            log_name = f"{args.train_attack}/step{args.step}/{args.train_eps}/{args.lr}_{args.lr_ratio}/{cur}"
+            log_name = f"{args.sche}/{args.train_attack}/step{args.step}/{args.train_eps}/{args.lr}_{args.lr_ratio}/{cur}"
         writer = SummaryWriter(f"./{log_dir}/{log_name}")
-        if args.train_attack=="aRUB" or args.train_attack=="QAUB":
-            approx_writer = SummaryWriter(f"./{log_dir}/approx_loss")
-            adv_writer = SummaryWriter(f"./{log_dir}/adv_loss")
+        # if args.train_attack=="aRUB" or args.train_attack=="QAUB":
+        #     approx_writer = SummaryWriter(f"./{log_dir}/approx_loss")
+        #     adv_writer = SummaryWriter(f"./{log_dir}/adv_loss")
     else:
-        log_name = f"no_attack/{args.lr}/{cur}"
+        log_name = f"{args.sche}/no_attack/{args.lr}/{cur}"
         writer = SummaryWriter(f"./{log_dir}/{log_name}")
 
     return writer, approx_writer, adv_writer, log_name

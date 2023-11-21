@@ -21,15 +21,22 @@ def main(args):
     model = torch.nn.DataParallel(model)
     model = model.to(device)
 
-    transform = transforms.Compose([transforms.Resize((args.imgsz, args.imgsz)),
+    norm_mean, norm_std = (0.5, 0.5, 0.5), (0.5, 0.5, 0.5)
+    # norm_mean, norm_std = (0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)
+    
+    transform = transforms.Compose([transforms.RandomCrop(args.imgsz, padding=4),
+                                    transforms.RandomHorizontalFlip(),
+                                    transforms.ToTensor(),
+                                    transforms.Normalize(norm_mean, norm_std)])
+    transform_val = transforms.Compose([transforms.Resize((args.imgsz, args.imgsz)),
                                         transforms.ToTensor(),
-                                        transforms.Normalize((0, 0, 0), (1, 1, 1))])
+                                        transforms.Normalize(norm_mean, norm_std)])
 
     train_data = CIFAR10(root='./data', train=True, download=False, transform=transform)
     train_size = int(len(train_data) * 0.8) # 80% training data
     valid_size = len(train_data) - train_size # 20% validation data
     train_data, valid_data = random_split(train_data, [train_size, valid_size])
-    test_data = CIFAR10(root='./data', train=False, download=False, transform=transform)
+    test_data = CIFAR10(root='./data', train=False, download=False, transform=transform_val)
 
     optim, adv_optim, scheduler, adv_scheduler = utils.set_optim(args, model)
     
@@ -39,12 +46,11 @@ def main(args):
     train_time = 0
     attack_time = 0
 
-    best_val = 0
-    best_val_adv = 0
     last_val = 0
     last_val_adv = 0
     
     for epoch in range(args.epoch):
+        train_data.dataset.transform = transform
         train_db = DataLoader(train_data, batch_size=args.task_num, shuffle=True, num_workers=2)
         
         train_correct_count = 0
@@ -82,6 +88,7 @@ def main(args):
         
         if epoch%5==0:
             model.eval()
+            valid_data.dataset.transform = transform_val
             db_val = torch.utils.data.DataLoader(valid_data, batch_size=args.task_num, shuffle=True, num_workers=0)
             val_correct_count = 0
             val_adv_correct_count = 0
@@ -110,12 +117,30 @@ def main(args):
 
             last_val = round(val_correct_count/len(valid_data)*100, 4)
             last_val_adv = round(val_adv_correct_count/len(valid_data)*100, 4)
-            if last_val > best_val:
-                best_val = last_val
-            if last_val_adv > best_val_adv:
-                best_val_adv = last_val_adv
-    
-    result = [log_name, best_val, best_val_adv, last_val, last_val_adv, round(train_time,4), round(attack_time,4)]
+            # if last_val > best_val:
+            #     best_val = last_val
+            # if last_val_adv > best_val_adv:
+            #     best_val_adv = last_val_adv
+
+    # test
+    model.eval()
+    db_test = torch.utils.data.DataLoader(test_data, batch_size=args.task_num, shuffle=True, num_workers=0)
+    test_correct_count = 0
+    test_adv_correct_count = 0
+    for _, (x, y) in enumerate(tqdm(db_test, desc="test")):
+        x = x.to(device)
+        y = y.to(device)
+        correct_count, loss = utils.predict(x, y, model)
+
+        test_correct_count += correct_count
+        
+        adv_correct_count, loss_adv = utils.adv_predict(args, args.test_attack, args.test_eps, x, y, model, mode='val')
+        test_adv_correct_count += adv_correct_count
+
+    test_acc =  round(test_correct_count/len(test_data)*100, 4)
+    test_adv_acc = round(test_adv_correct_count/len(test_data)*100, 4)
+
+    result = [log_name, test_acc, test_adv_acc, last_val, last_val_adv, round(train_time,4), round(attack_time,4)]
     with open('result.csv', 'a', encoding='utf-8', newline='') as f:
         wr = csv.writer(f)
         wr.writerow(result)
@@ -125,13 +150,13 @@ if __name__ == '__main__':
     argparser = argparse.ArgumentParser()
 
     # Dataset options
-    argparser.add_argument('--imgsz', type=int, help='imgsz', default=112)
+    argparser.add_argument('--imgsz', type=int, help='imgsz', default=32)
     argparser.add_argument('--imgc', type=int, help='imgc', default=3)
     argparser.add_argument('--n_way', type=int, help='n way', default=10)
     
     # Training options
     argparser.add_argument('--model', type=str, help='type of model to use', default="resnet18")
-    argparser.add_argument('--epoch', type=int, help='epoch number', default=100)
+    argparser.add_argument('--epoch', type=int, help='epoch number', default=200)
     argparser.add_argument('--task_num', type=int, help='meta batch size, namely task num', default=128)
     argparser.add_argument('--device_num', type=int, help='what gpu to use', default=0)
     argparser.add_argument('--lr', type=float, help='learning rate', default=0.01)
@@ -149,8 +174,7 @@ if __name__ == '__main__':
     argparser.add_argument('--rho', type=float, help='aRUB-rho', default=6)
     argparser.add_argument('--iter', type=int, default=10)
 
-
-    argparser.add_argument('--sche', type=str, default="")
+    argparser.add_argument('--sche', type=str, default="cosine")
 
     args = argparser.parse_args()
 

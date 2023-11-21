@@ -34,9 +34,16 @@ def main(args, set_k=None):
     model = torch.nn.DataParallel(model)
     model = model.to(device)
 
-    transform = transforms.Compose([transforms.Resize((args.imgsz, args.imgsz)),
+    # transform = transforms.Compose([transforms.Resize((args.imgsz, args.imgsz)),
+    #                                     transforms.ToTensor(),
+    #                                     transforms.Normalize((0, 0, 0), (1, 1, 1))])
+    transform = transforms.Compose([transforms.RandomCrop(args.imgsz, padding=4),
+                                    transforms.RandomHorizontalFlip(),
+                                    transforms.ToTensor(),
+                                    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))])
+    transform_test = transforms.Compose([transforms.Resize((args.imgsz, args.imgsz)),
                                         transforms.ToTensor(),
-                                        transforms.Normalize((0, 0, 0), (1, 1, 1))])
+                                        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))])
 
     train_data = torchvision.datasets.CIFAR10(root='./data', train=True,
                                             download=False, transform=transform)
@@ -45,7 +52,7 @@ def main(args, set_k=None):
     train_data, valid_data = torch.utils.data.random_split(train_data, [train_size, valid_size])
 
     test_data = torchvision.datasets.CIFAR10(root='./data', train=False,
-                                        download=False, transform=transform)
+                                        download=False, transform=transform_test)
     
     print(len(train_data), len(valid_data), len(test_data))
 
@@ -83,7 +90,7 @@ def main(args, set_k=None):
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer=optim, lr_lambda=lambda epoch: lamb**epoch)
         adv_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer=adv_optim, lr_lambda=lambda epoch: lamb**epoch)
 
-    log_dir = "step_log_98"
+    log_dir = "logs"
     
     if args.train_attack!="":
         writer = SummaryWriter(f"./{log_dir}/{args.train_attack}_{args.train_eps}_{args.lr}_{args.lr_ratio}_{args.sche}")
@@ -103,6 +110,7 @@ def main(args, set_k=None):
     
     for epoch in range(args.epoch):
         train_st = time.time()
+        train_data.dataset.transform = transform
         train_db = torch.utils.data.DataLoader(train_data, batch_size=args.task_num, shuffle=True, num_workers=2)
         train_correct_count=0
         train_loss = 0
@@ -171,40 +179,41 @@ def main(args, set_k=None):
         # if args.train_attack!="" or args.NAM:
         #     writer.add_histogram("train_adv", np.array(train_losses_adv), epoch)
             # writer_train_adv.add_histogram(summary_name, np.array(train_losses_adv), epoch)
-        
-        model.eval()
-        db_val = torch.utils.data.DataLoader(valid_data, batch_size=args.task_num, shuffle=True, num_workers=0)
-        val_correct_count = 0
-        val_adv_correct_count = 0
-        val_loss = 0
-        val_loss_adv = 0
-        for _, (x, y) in enumerate(tqdm(db_val, desc="val")):
-            x = x.to(device)
-            y = y.to(device)
-            with torch.no_grad():
-                logit = model(x)
+        if epoch%5==0:
+            valid_data.dataset.transform = transform_test
+            model.eval()
+            db_val = torch.utils.data.DataLoader(valid_data, batch_size=args.task_num, shuffle=True, num_workers=0)
+            val_correct_count = 0
+            val_adv_correct_count = 0
+            val_loss = 0
+            val_loss_adv = 0
+            for _, (x, y) in enumerate(tqdm(db_val, desc="val")):
+                x = x.to(device)
+                y = y.to(device)
+                with torch.no_grad():
+                    logit = model(x)
+                    pred = torch.nn.functional.softmax(logit, dim=1)
+                outputs = torch.argmax(pred, dim=1)
+                val_correct_count += (outputs == y).sum().item()
+                loss = torch.nn.functional.cross_entropy(logit, y)
+                val_loss += loss.item()*x.shape[0]
+
+            at = utils.setAttack(args.test_attack, model, args.test_eps, args)
+            for _, (x, y) in enumerate(tqdm(db_val, desc="adv val")):
+                x = x.to(device)
+                y = y.to(device)
+                advx = at.perturb(x, y)
+                logit = model(advx)
                 pred = torch.nn.functional.softmax(logit, dim=1)
-            outputs = torch.argmax(pred, dim=1)
-            val_correct_count += (outputs == y).sum().item()
-            loss = torch.nn.functional.cross_entropy(logit, y)
-            val_loss += loss.item()*x.shape[0]
+                outputs = torch.argmax(pred, dim=1)
+                val_adv_correct_count += (outputs == y).sum().item()
+                loss = torch.nn.functional.cross_entropy(logit, y)
+                val_loss_adv += loss.item()*x.shape[0]
 
-        at = utils.setAttack(args.test_attack, model, args.test_eps, args)
-        for _, (x, y) in enumerate(tqdm(db_val, desc="adv val")):
-            x = x.to(device)
-            y = y.to(device)
-            advx = at.perturb(x, y)
-            logit = model(advx)
-            pred = torch.nn.functional.softmax(logit, dim=1)
-            outputs = torch.argmax(pred, dim=1)
-            val_adv_correct_count += (outputs == y).sum().item()
-            loss = torch.nn.functional.cross_entropy(logit, y)
-            val_loss_adv += loss.item()*x.shape[0]
-
-        writer.add_scalar("val/acc", round(val_correct_count/len(valid_data)*100, 4), epoch)
-        writer.add_scalar("val/loss", round(val_loss/len(valid_data)*100, 4), epoch)
-        writer.add_scalar("val/adv_acc", round(val_adv_correct_count/len(valid_data)*100, 4), epoch)
-        writer.add_scalar("val/adv_loss", round(val_loss_adv/len(valid_data)*100, 4), epoch)
+            writer.add_scalar("val/acc", round(val_correct_count/len(valid_data)*100, 4), epoch)
+            writer.add_scalar("val/loss", round(val_loss/len(valid_data)*100, 4), epoch)
+            writer.add_scalar("val/adv_acc", round(val_adv_correct_count/len(valid_data)*100, 4), epoch)
+            writer.add_scalar("val/adv_loss", round(val_loss_adv/len(valid_data)*100, 4), epoch)
 
         # writer.add_scalar('lr', optim.param_groups[0]['lr'], epoch)
         scheduler.step()
@@ -237,7 +246,7 @@ if __name__ == '__main__':
     argparser = argparse.ArgumentParser()
 
     # Dataset options
-    argparser.add_argument('--imgsz', type=int, help='imgsz', default=112)
+    argparser.add_argument('--imgsz', type=int, help='imgsz', default=32)
     argparser.add_argument('--imgc', type=int, help='imgc', default=3)
     argparser.add_argument('--n_way', type=int, help='n way', default=10)
     

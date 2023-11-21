@@ -4,7 +4,7 @@ k_logs
 k_logs_eps6
 step_log
 best_log
-python_exe.ipynb
+logs_with_no_preprocess
 models
 command.sh
 *.pyc
