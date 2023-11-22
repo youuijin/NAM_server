@@ -22,7 +22,7 @@ def setAttack(str_at, net, eps, args):
     elif str_at == "PGD_L2":
         return attacks.L2PGDAttack(net, eps=e, nb_iter=iter)
     elif str_at == "PGD_Linf":
-        return attacks.LinfPGDAttack(net, eps=e, nb_iter=iter)
+        return attacks.LinfPGDAttack(net, eps=e, nb_iter=iter, clip_max=1.0, clip_min=-1.0)
     elif str_at == "FGSM":
         return attacks.GradientSignAttack(net, eps=e)
     elif str_at == "BIM_L2":
@@ -52,11 +52,10 @@ def setModel(str, n_way, imgsz, imgc, pretrained='IMAGENET1K_V1'):
     if str=="resnet18":
         model = models.resnet18(weights=pretrained)
         num_ftrs = model.fc.in_features
-        # model.fc = torch.nn.Sequential(
-        #     torch.nn.Dropout(0.5),
-        #     torch.nn.Linear(num_ftrs, n_way)
-        # )
-        model.fc = torch.nn.Linear(num_ftrs, n_way)
+        model.fc = torch.nn.Sequential(
+            torch.nn.Dropout(0.5),
+            torch.nn.Linear(num_ftrs, n_way)
+        )
         model.conv1 = torch.nn.Conv2d(imgc, 64, kernel_size=7, stride=2, padding=3, bias=False)
         return model
     elif str=="resnet34":
@@ -130,8 +129,8 @@ def set_optim(args, model):
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer=optim, lr_lambda=lambda epoch: lamb**epoch)
         adv_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer=adv_optim, lr_lambda=lambda epoch: lamb**epoch)
     elif args.sche == 'cosine':
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=int(args.epoch/4))
-        adv_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(adv_optim, T_max=int(args.epoch/4))
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=int(args.epoch))
+        adv_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(adv_optim, T_max=int(args.epoch))
     elif args.sche == 'step':
         scheduler = torch.optim.lr_scheduler.StepLR(optim, step_size=int(args.epoch*0.2), gamma=0.5)
         adv_scheduler = torch.optim.lr_scheduler.StepLR(adv_optim, step_size=int(args.epoch*0.2), gamma=0.5)

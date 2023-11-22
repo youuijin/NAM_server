@@ -21,9 +21,10 @@ def main(args):
     model = torch.nn.DataParallel(model)
     model = model.to(device)
 
+    # norm_mean, norm_std = (0, 0, 0), (1, 1, 1)
     norm_mean, norm_std = (0.5, 0.5, 0.5), (0.5, 0.5, 0.5)
     # norm_mean, norm_std = (0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)
-    
+
     transform = transforms.Compose([transforms.RandomCrop(args.imgsz, padding=4),
                                     transforms.RandomHorizontalFlip(),
                                     transforms.ToTensor(),
@@ -74,6 +75,7 @@ def main(args):
             if args.train_attack!="":
                 attack_time_st = time.time()
                 loss_adv = utils.adv_predict(args, args.train_attack, args.train_eps, x, y, model, mode='train')
+
                 attack_time += (time.time() - attack_time_st)
                 train_loss_adv += loss_adv.item()
                 adv_optim.zero_grad()
@@ -111,12 +113,14 @@ def main(args):
             writer.add_scalar("val/acc_adv", round(val_adv_correct_count/len(valid_data)*100, 4), epoch)
             writer.add_scalar("val/loss_adv", round(val_loss_adv/len(valid_data)*100, 4), epoch)
 
-            writer.add_scalar('lr', optim.param_groups[0]['lr'], epoch)
-            scheduler.step()
-            adv_scheduler.step()
-
             last_val = round(val_correct_count/len(valid_data)*100, 4)
             last_val_adv = round(val_adv_correct_count/len(valid_data)*100, 4)
+
+        writer.add_scalar('lr', optim.param_groups[0]['lr'], epoch)
+        scheduler.step()
+        adv_scheduler.step()
+
+            
             # if last_val > best_val:
             #     best_val = last_val
             # if last_val_adv > best_val_adv:
@@ -160,7 +164,6 @@ if __name__ == '__main__':
     argparser.add_argument('--task_num', type=int, help='meta batch size, namely task num', default=128)
     argparser.add_argument('--device_num', type=int, help='what gpu to use', default=0)
     argparser.add_argument('--lr', type=float, help='learning rate', default=0.01)
-    # argparser.add_argument('--adv_lr', type=float, help='adversarial learning rate', default=0.0001)
     argparser.add_argument('--lr_ratio', type=float, help='adv lr ratio', default=0.5)
     argparser.add_argument('--train_attack', type=str, help='attack for adversarial training', default="")
     argparser.add_argument('--train_eps', type=float, help='training attack bound', default=6.0)
@@ -170,11 +173,11 @@ if __name__ == '__main__':
 
     # adversarial attack options
     argparser.add_argument('--test_attack', type=str, default="PGD_Linf")
-    argparser.add_argument('--test_eps', type=float, help='attack-eps', default=6.0)
+    argparser.add_argument('--test_eps', type=float, help='attack-eps', default=8.0)
     argparser.add_argument('--rho', type=float, help='aRUB-rho', default=6)
     argparser.add_argument('--iter', type=int, default=10)
 
-    argparser.add_argument('--sche', type=str, default="cosine")
+    argparser.add_argument('--sche', type=str, default="multistep")
 
     args = argparser.parse_args()
 
