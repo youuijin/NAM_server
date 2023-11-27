@@ -3,8 +3,6 @@ import  numpy as np
 
 from torchvision import models
 import advertorch.attacks as attacks
-from aRUBattack import aRUB
-from QAUB import QAUB
 import torch.nn.functional as F
 
 from torch.utils.tensorboard import SummaryWriter
@@ -17,34 +15,30 @@ attack_list=["PGD_L1", "PGD_L2", "PGD_Linf", "FGSM", "BIM_L2", "BIM_Linf", "MI-F
 def setAttack(str_at, net, eps, args):
     e = eps/255.
     iter = args.iter
-    clip_max = 1.0
-    clip_min = -1.0
     if str_at == "PGD_L1":
-        return attacks.L1PGDAttack(net, eps=e, nb_iter=iter, clip_max=clip_max, clip_min=clip_min)
+        return attacks.L1PGDAttack(net, eps=e, nb_iter=iter)
     elif str_at == "PGD_L2":
-        return attacks.L2PGDAttack(net, eps=e, nb_iter=iter, clip_max=clip_max, clip_min=clip_min)
+        return attacks.L2PGDAttack(net, eps=e, nb_iter=iter)
     elif str_at == "PGD_Linf":
-        return attacks.LinfPGDAttack(net, eps=e, nb_iter=iter, clip_max=clip_max, clip_min=clip_min)
+        return attacks.LinfPGDAttack(net, eps=e, nb_iter=iter, clip_max=1.0, clip_min=-1.0)
     elif str_at == "FGSM":
-        return attacks.GradientSignAttack(net, eps=e, clip_max=clip_max, clip_min=clip_min)
+        return attacks.GradientSignAttack(net, eps=e)
     elif str_at == "BIM_L2":
-        return attacks.L2BasicIterativeAttack(net, eps=e, nb_iter=iter, clip_max=clip_max, clip_min=clip_min)
+        return attacks.L2BasicIterativeAttack(net, eps=e, nb_iter=iter)
     elif str_at == "BIM_Linf":
-        return attacks.LinfBasicIterativeAttack(net, eps=e, nb_iter=iter, clip_max=clip_max, clip_min=clip_min)
+        return attacks.LinfBasicIterativeAttack(net, eps=e, nb_iter=iter)
     elif str_at == "MI-FGSM":
-        return attacks.MomentumIterativeAttack(net, eps=e, nb_iter=iter, clip_max=clip_max, clip_min=clip_min) # 0.3, 40
+        return attacks.MomentumIterativeAttack(net, eps=e, nb_iter=iter) # 0.3, 40
     elif str_at == "CnW":
-        return attacks.CarliniWagnerL2Attack(net, args.n_way, max_iterations=iter, clip_max=clip_max, clip_min=clip_min)
+        return attacks.CarliniWagnerL2Attack(net, args.n_way, max_iterations=iter)
     elif str_at == "EAD":
-        return attacks.ElasticNetL1Attack(net, args.n_way, max_iterations=iter, clip_max=clip_max, clip_min=clip_min)
+        return attacks.ElasticNetL1Attack(net, args.n_way, max_iterations=iter)
     elif str_at == "DDN":
-        return attacks.DDNL2Attack(net, nb_iter=iter, clip_max=clip_max, clip_min=clip_min)
+        return attacks.DDNL2Attack(net, nb_iter=iter)
     elif str_at == "Single_pixel":
-        return attacks.SinglePixelAttack(net, max_pixels=iter, clip_max=clip_max, clip_min=clip_min)
+        return attacks.SinglePixelAttack(net, max_pixels=iter)
     elif str_at == "DeepFool":
-        return attacks.DeepfoolLinfAttack(net, args.n_way, eps=e, nb_iter=iter, clip_max=clip_max, clip_min=clip_min)
-    elif str_at == "aRUB":
-            return aRUB(net, rho=e, q=1, n_way=args.n_way, imgc=args.imgc, imgsz=args.imgsz)
+        return attacks.DeepfoolLinfAttack(net, args.n_way, eps=e, nb_iter=iter)
     else:
         print("wrong type Attack")
         exit()
@@ -90,28 +84,19 @@ def setModel(str, n_way, imgsz, imgc, pretrained='IMAGENET1K_V1'):
     elif str=="resnet152":
         model = models.resnet152(weights=pretrained)
         num_ftrs = model.fc.in_features
-        model.fc = torch.nn.Sequential(
-            torch.nn.Dropout(0.5),
-            torch.nn.Linear(num_ftrs, n_way)
-        )
+        model.fc = torch.nn.Linear(num_ftrs, n_way)
         model.conv1 = torch.nn.Conv2d(imgc, 64, kernel_size=7, stride=2, padding=3, bias=False)
         return model
     elif str=="alexnet":
         model = models.alexnet(weights=pretrained)
         num_ftrs = model.classifier._modules["6"].in_features
-        model.classifier._modules["6"] = torch.nn.Sequential(
-            torch.nn.Dropout(0.5),
-            torch.nn.Linear(num_ftrs, n_way)
-        )
+        model.classifier._modules["6"] = torch.nn.Linear(num_ftrs, n_way)
         model.features._modules["0"] = torch.nn.Conv2d(imgc, 64, kernel_size=11, stride=4, padding=2, bias=False)
         return model
     elif str=="densenet121":
         model = models.densenet121(weights=pretrained)
         num_ftrs = model.classifier.in_features
-        model.classifier = torch.nn.Sequential(
-            torch.nn.Dropout(0.5),
-            torch.nn.Linear(num_ftrs, n_way)
-        )
+        model.classifier = torch.nn.Linear(num_ftrs, n_way)
         return model
     elif str=="mobilenet_v2":
         model = models.mobilenet_v2(weights=pretrained)
@@ -139,6 +124,9 @@ def set_seed(seed=706):
 def set_optim(args, model):
     optim = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
     adv_optim = torch.optim.SGD(model.parameters(), lr=args.lr * args.lr_ratio, momentum=0.9, weight_decay=5e-4)
+
+    # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max = 100)
+    # adv_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(adv_optim, T_max = 100)
 
     if args.sche == 'lambda98':
         lamb = 0.98
@@ -176,7 +164,6 @@ def writer(args, log_dir):
         if args.train_attack == 'QAUB':
             log_name = f"{args.sche}/{args.train_attack}/step{args.step}/{args.train_eps}/{args.lr}_{args.lr_ratio}/{cur}"
         writer = SummaryWriter(f"./{log_dir}/{log_name}")
-        # to check bound
         # if args.train_attack=="aRUB" or args.train_attack=="QAUB":
         #     approx_writer = SummaryWriter(f"./{log_dir}/approx_loss")
         #     adv_writer = SummaryWriter(f"./{log_dir}/adv_loss")
@@ -222,7 +209,37 @@ def approx_loss(args, x, y, model, bound):
     # if bound:
     return approx_loss.sum()
         
+    
+    
 
 def bound_rate():
     pass # TODO
 
+def clamp(input, min=None, max=None):
+    ndim = input.ndimension()
+    if min is None:
+        pass
+    elif isinstance(min, (float, int)):
+        input = torch.clamp(input, min=min)
+    elif isinstance(min, torch.Tensor):
+        if min.ndimension() == ndim - 1 and min.shape == input.shape[1:]:
+            input = torch.max(input, min.view(1, *min.shape))
+        else:
+            assert min.shape == input.shape
+            input = torch.max(input, min)
+    else:
+        raise ValueError("min can only be None | float | torch.Tensor")
+
+    if max is None:
+        pass
+    elif isinstance(max, (float, int)):
+        input = torch.clamp(input, max=max)
+    elif isinstance(max, torch.Tensor):
+        if max.ndimension() == ndim - 1 and max.shape == input.shape[1:]:
+            input = torch.min(input, max.view(1, *max.shape))
+        else:
+            assert max.shape == input.shape
+            input = torch.min(input, max)
+    else:
+        raise ValueError("max can only be None | float | torch.Tensor")
+    return input

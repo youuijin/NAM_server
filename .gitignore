@@ -6,6 +6,8 @@ step_log
 best_log
 logs_with_no_preprocess
 models
-command.sh
 *.pyc
 __pycache__
+clip_effect/images
+*.sh
+*.csv
